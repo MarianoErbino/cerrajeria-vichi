@@ -13,16 +13,29 @@ import { iniciarBotFacturacion } from './modules/bot/scheduler.js';
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Middlewares
+// CORS: acepta el dominio de Vercel y localhost
+const origenesPermitidos = [
+  'http://localhost:5173',
+  'http://localhost:4173',
+];
+if (process.env.CLIENT_URL) origenesPermitidos.push(process.env.CLIENT_URL);
+// Aceptar cualquier subdominio de vercel.app automáticamente
 app.use(cors({
-  origin: process.env.CLIENT_URL || 'http://localhost:5173',
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true); // requests sin origin (curl, Render health checks)
+    const permitido =
+      origenesPermitidos.includes(origin) ||
+      /\.vercel\.app$/.test(origin) ||
+      /^http:\/\/localhost/.test(origin);
+    callback(null, permitido);
+  },
   credentials: true,
 }));
 app.use(express.json());
 
-// Rate limiting para endpoints de auth
+// Rate limiting para auth
 const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutos
+  windowMs: 15 * 60 * 1000,
   max: 10,
   message: { error: 'Demasiados intentos. Esperá 15 minutos.' },
 });
@@ -40,13 +53,14 @@ app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
-    environment: process.env.ARCA_ENVIRONMENT || 'no configurado'
+    modo: process.env.SPREADSHEET_ID ? 'google-sheets' : 'local',
+    environment: process.env.ARCA_ENVIRONMENT || 'no configurado',
   });
 });
 
 // Manejo global de errores
 app.use((err, req, res, next) => {
-  console.error('[ERROR]', err.message, err.stack);
+  console.error('[ERROR]', err.message);
   res.status(err.status || 500).json({
     error: err.message || 'Error interno del servidor'
   });
@@ -54,10 +68,9 @@ app.use((err, req, res, next) => {
 
 // Iniciar servidor
 app.listen(PORT, () => {
-  console.log(`✅ Servidor corriendo en http://localhost:${PORT}`);
-  console.log(`🌍 Ambiente ARCA: ${process.env.ARCA_ENVIRONMENT || 'no configurado'}`);
-
-  // Iniciar el bot de facturación automática
+  console.log(`✅ Servidor corriendo en puerto ${PORT}`);
+  console.log(`📊 Modo: ${process.env.SPREADSHEET_ID ? 'Google Sheets' : 'Local (Excel)'}`);
+  console.log(`🌍 ARCA: ${process.env.ARCA_ENVIRONMENT || 'no configurado'}`);
   iniciarBotFacturacion();
 });
 

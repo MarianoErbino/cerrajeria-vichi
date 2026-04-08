@@ -1,0 +1,36 @@
+services:
+  - type: web
+    name: cerrajeria-vichi-api
+    runtime: node
+    rootDir: server
+    buildCommand: npm install
+    startCommand: node src/index.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3001
+      - key: OWNER_PIN
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: GOOGLE_SERVICE_ACCOUNT_EMAIL
+        sync: false
+      - key: GOOGLE_PRIVATE_KEY
+        sync: false
+      - key: SPREADSHEET_ID
+        sync: false
+      - key: CLIENT_URL
+        sync: false
+      - key: ARCA_CUIT
+        sync: false
+      - key: ARCA_PUNTO_VENTA
+        sync: false
+      - key: ARCA_WSAA_URL
+        value: https://wsaahomo.afip.gov.ar/ws/services/LoginCms
+      - key: ARCA_WSFE_URL
+        value: https://wswhomo.afip.gov.ar/wsfev1/service.asmx
+      - key: ARCA_ENVIRONMENT
+        value: homologacion
+      - key: BOT_TIMEZONE
+        value: America/Argentina/Buenos_Aires

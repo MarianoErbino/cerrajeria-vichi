@@ -1,7 +1,10 @@
 // Cliente HTTP centralizado para comunicación con el backend
 import { getTokenActual } from '../context/AuthContext';
 
-const BASE_URL = '/api';
+// En producción usa VITE_API_URL; en local usa el proxy de Vite (/api → localhost:3001)
+const BASE_URL = import.meta.env.VITE_API_URL
+  ? `${import.meta.env.VITE_API_URL}/api`
+  : '/api';
 
 /**
  * Wrapper de fetch con manejo de auth y errores.
