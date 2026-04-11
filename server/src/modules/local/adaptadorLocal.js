@@ -94,7 +94,7 @@ export function obtenerServiciosLocal() {
   const data = XLSX.utils.sheet_to_json(ws, { header: 1, range: 5 });
 
   return data
-    .filter(f => f[1]) // columna B = ID servicio
+    .filter(f => f[1] && f[2]) // columna B = ID servicio, columna C = nombre (excluye filas de instrucciones)
     .map(f => ({
       idServicio: String(f[1] || ''),
       nombre: String(f[2] || ''),

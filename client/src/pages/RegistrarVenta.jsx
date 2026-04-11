@@ -39,18 +39,27 @@ function SelectorMateriales({ seleccionados, onChange }) {
   const [todosLosProductos, setTodosLosProductos] = useState([]);
   const [abierto, setAbierto] = useState(false);
   const [cargando, setCargando] = useState(false);
+  const [errorCarga, setErrorCarga] = useState(false);
 
-  // Cargar todos los productos la primera vez que se abre
+  // Cargar todos los productos la primera vez que se abre (o al reintentar)
+  const cargarProductos = async () => {
+    setCargando(true);
+    setErrorCarga(false);
+    try {
+      const data = await api.catalogo.productos();
+      if (!data || data.length === 0) throw new Error('Sin datos');
+      setTodosLosProductos(data);
+    } catch {
+      setErrorCarga(true);
+    } finally {
+      setCargando(false);
+    }
+  };
+
   const abrir = async () => {
     setAbierto(true);
     if (todosLosProductos.length > 0) return; // ya cargados
-    setCargando(true);
-    try {
-      const data = await api.catalogo.productos();
-      setTodosLosProductos(data);
-    } catch { } finally {
-      setCargando(false);
-    }
+    await cargarProductos();
   };
 
   // Filtrado 100% en el cliente — sin llamadas al servidor
@@ -138,7 +147,6 @@ function SelectorMateriales({ seleccionados, onChange }) {
               value={busqueda}
               onChange={e => setBusqueda(e.target.value)}
               placeholder="Buscar por nombre, código, categoría..."
-              autoFocus
               className="w-full h-11 bg-[#2d2c29] rounded-xl pl-10 pr-4 text-sm text-[#F0EDE8] placeholder-[#9b9690] border border-[#185FA5] outline-none"
             />
             {busqueda && (
@@ -160,12 +168,25 @@ function SelectorMateriales({ seleccionados, onChange }) {
                 </svg>
                 Cargando catálogo...
               </div>
+            ) : errorCarga ? (
+              <div className="flex flex-col items-center justify-center py-8 gap-3">
+                <p className="text-sm text-red-400">No se pudo cargar el catálogo</p>
+                <button
+                  type="button"
+                  onClick={cargarProductos}
+                  className="h-9 px-4 rounded-lg bg-[#185FA5]/20 border border-[#185FA5]/40 text-[#185FA5] text-sm font-medium active:bg-[#185FA5]/30"
+                >
+                  Reintentar
+                </button>
+              </div>
             ) : (
               <>
                 <div className="px-3 py-2 border-b border-[#363430] flex items-center justify-between">
                   <span className="text-xs text-[#9b9690]">
-                    {productosFiltrados.length} producto{productosFiltrados.length !== 1 ? 's' : ''}
-                    {busqueda ? ` para "${busqueda}"` : ''}
+                    {busqueda
+                      ? `${productosFiltrados.length} resultado${productosFiltrados.length !== 1 ? 's' : ''} para "${busqueda}"`
+                      : `${todosLosProductos.length} productos — escribí para filtrar`
+                    }
                   </span>
                   <button type="button" onClick={() => setAbierto(false)} className="text-xs text-[#185FA5]">
                     Cerrar
@@ -173,7 +194,7 @@ function SelectorMateriales({ seleccionados, onChange }) {
                 </div>
 
                 <div className="max-h-64 overflow-y-auto">
-                  {productosFiltrados.slice(0, 100).map(prod => {
+                  {(busqueda ? productosFiltrados : productosFiltrados.slice(0, 50)).map(prod => {
                     const seleccionado = seleccionados.find(p => p.codigo === prod.codigo);
                     return (
                       <button
@@ -205,9 +226,14 @@ function SelectorMateriales({ seleccionados, onChange }) {
                       </button>
                     );
                   })}
-                  {productosFiltrados.length > 100 && (
+                  {!busqueda && todosLosProductos.length > 50 && (
                     <p className="text-xs text-center text-[#9b9690] py-3">
-                      Mostrando 100 de {productosFiltrados.length}. Escribí para filtrar.
+                      Mostrando 50 de {todosLosProductos.length}. Escribí para buscar.
+                    </p>
+                  )}
+                  {busqueda && productosFiltrados.length === 0 && (
+                    <p className="text-xs text-center text-[#9b9690] py-6">
+                      Sin resultados para "{busqueda}"
                     </p>
                   )}
                 </div>
@@ -220,10 +246,11 @@ function SelectorMateriales({ seleccionados, onChange }) {
   );
 }
 
-// Búsqueda de clientes en tiempo real
+// Búsqueda de clientes — con selector de contactos del celular
 function BuscadorCliente({ nombre, telefono, onNombreChange, onTelefonoChange, onSeleccionar }) {
   const [resultados, setResultados] = useState([]);
   const [mostrarResultados, setMostrarResultados] = useState(false);
+  const soportaContactos = typeof navigator !== 'undefined' && 'contacts' in navigator;
   const timerRef = useRef(null);
 
   const buscar = useCallback(async (texto) => {
@@ -248,8 +275,44 @@ function BuscadorCliente({ nombre, telefono, onNombreChange, onTelefonoChange, o
     setResultados([]);
   };
 
+  // Abre el selector nativo de contactos del celular
+  const elegirDeContactos = async () => {
+    try {
+      const contactos = await navigator.contacts.select(['name', 'tel'], { multiple: false });
+      if (contactos?.length > 0) {
+        const c = contactos[0];
+        const nombreContacto = c.name?.[0] || '';
+        // Limpiar el teléfono: sacar espacios, guiones, paréntesis
+        const telLimpio = (c.tel?.[0] || '').replace(/[\s\-\(\)\+]/g, '');
+        onNombreChange(nombreContacto);
+        onTelefonoChange(telLimpio);
+        setResultados([]);
+        setMostrarResultados(false);
+      }
+    } catch (err) {
+      // AbortError = el usuario canceló, no es un error real
+      if (err.name !== 'AbortError') console.error('Error al leer contacto:', err);
+    }
+  };
+
   return (
     <div className="space-y-2">
+      {/* Botón de agenda del celular (solo si el navegador lo soporta) */}
+      {soportaContactos && (
+        <button
+          type="button"
+          onClick={elegirDeContactos}
+          className="w-full h-11 bg-[#185FA5]/15 border border-[#185FA5]/40 rounded-xl flex items-center justify-center gap-2 text-sm text-[#185FA5] font-medium active:bg-[#185FA5]/25 transition-colors"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="w-4 h-4">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
+            <circle cx="9" cy="7" r="4" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" />
+          </svg>
+          Elegir de mis contactos
+        </button>
+      )}
+
       <div className="relative">
         <input
           type="text"
@@ -257,7 +320,7 @@ function BuscadorCliente({ nombre, telefono, onNombreChange, onTelefonoChange, o
           onChange={handleNombre}
           onFocus={() => resultados.length > 0 && setMostrarResultados(true)}
           onBlur={() => setTimeout(() => setMostrarResultados(false), 150)}
-          placeholder="Nombre del cliente"
+          placeholder={soportaContactos ? 'O escribí el nombre manualmente...' : 'Nombre del cliente'}
           className="w-full h-11 bg-[#2d2c29] rounded-xl px-4 text-sm text-[#F0EDE8] placeholder-[#9b9690] border border-[#363430] focus:border-[#185FA5] outline-none"
         />
         {mostrarResultados && resultados.length > 0 && (
@@ -360,7 +423,6 @@ export default function RegistrarVenta() {
     e.preventDefault();
     if (!form.tipoServicio) return mostrarError('Seleccioná un tipo de servicio');
     if (!form.montoCobrado) return mostrarError('Ingresá el monto cobrado');
-    if (form.requiereFactura && !form.cuitCliente) return mostrarError('Ingresá el CUIT del cliente para facturar');
 
     setGuardando(true);
     try {
@@ -503,7 +565,7 @@ export default function RegistrarVenta() {
         {/* Datos de facturación (condicional) */}
         {form.requiereFactura && (
           <div className="bg-[#242320] rounded-2xl p-4 border border-[#363430] space-y-4 fade-in">
-            <Campo label="CUIT del cliente" requerido>
+            <Campo label="CUIT del cliente">
               <input
                 type="text"
                 inputMode="numeric"

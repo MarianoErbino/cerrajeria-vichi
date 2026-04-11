@@ -71,7 +71,7 @@ export async function obtenerServicios() {
   if (!datos || datos.length === 0) return [];
 
   return datos
-    .filter(f => f[1])
+    .filter(f => f[1] && f[2]) // ID + nombre requeridos (excluye filas de instrucciones)
     .map(f => ({
       idServicio: String(f[1] || ''),
       nombre: String(f[2] || ''),
