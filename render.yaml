@@ -2,6 +2,7 @@ services:
   - type: web
     name: cerrajeria-vichi-api
     runtime: node
+    plan: free
     rootDir: server
     buildCommand: npm install
     startCommand: node src/index.js
