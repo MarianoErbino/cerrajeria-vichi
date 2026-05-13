@@ -2,6 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
+import { writeFileSync, mkdirSync, existsSync } from 'fs';
 import authRoutes from './routes/auth.js';
 import ventasRoutes from './routes/ventas.js';
 import clientesRoutes from './routes/clientes.js';
@@ -9,6 +10,21 @@ import catalogoRoutes from './routes/catalogo.js';
 import facturacionRoutes from './routes/facturacion.js';
 import dashboardRoutes from './routes/dashboard.js';
 import { iniciarBotFacturacion } from './modules/bot/scheduler.js';
+
+// Materializar certificados de ARCA si vienen como contenido en env vars
+// (uso en Render, donde no se pueden subir archivos al filesystem). Los
+// archivos quedan en /tmp/arca durante la vida del proceso.
+if (process.env.ARCA_CERT_CONTENT && process.env.ARCA_KEY_CONTENT) {
+  const dir = '/tmp/arca';
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  const certPath = `${dir}/cert.pem`;
+  const keyPath = `${dir}/key.pem`;
+  writeFileSync(certPath, process.env.ARCA_CERT_CONTENT);
+  writeFileSync(keyPath, process.env.ARCA_KEY_CONTENT);
+  process.env.ARCA_CERT_PATH = certPath;
+  process.env.ARCA_KEY_PATH = keyPath;
+  console.log('🔐 ARCA: certificados materializados desde env vars');
+}
 
 const app = express();
 const PORT = process.env.PORT || 3001;
