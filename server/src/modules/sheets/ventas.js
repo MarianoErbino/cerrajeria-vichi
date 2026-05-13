@@ -8,8 +8,9 @@ import {
 } from '../local/adaptadorLocal.js';
 
 const MODO_LOCAL = !process.env.SPREADSHEET_ID;
-const HOJA = '💰 Ventas';
-const HOJA_STOCK = '📊 Stock';
+const HOJA = 'Ventas';
+const HOJA_STOCK = 'Stock';
+const HOJA_PRODUCTOS = 'Productos';
 
 const COL = {
   ID: 0, FECHA: 1, HORA: 2, TIPO_SERVICIO: 3, CLIENTE_NOMBRE: 4,
@@ -126,7 +127,7 @@ async function descontarStock(material, idVenta, fecha) {
 
   const cantidadUsada = parseInt(material.cantidad) || 1;
   const stockNuevo = Math.max(0, producto.stockActual - cantidadUsada);
-  await actualizarRango(`📦 Productos!J${producto._filaExcel}`, [[stockNuevo]]);
+  await actualizarRango(`${HOJA_PRODUCTOS}!J${producto._filaExcel}`, [[stockNuevo]]);
 
   const hora = new Date().toLocaleTimeString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires', hour: '2-digit', minute: '2-digit' });
   await agregarFila(HOJA_STOCK, [`${fecha} ${hora}`, material.codigo, material.descripcion || producto.descripcion, 'SALIDA_VENTA', cantidadUsada, producto.stockActual, stockNuevo, idVenta, '']);

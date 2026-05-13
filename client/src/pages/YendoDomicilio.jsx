@@ -3,9 +3,25 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../services/api';
 import { useToast } from '../context/ToastContext';
 
+// Normaliza un teléfono argentino al formato que espera WhatsApp: 549 + área + número (10 dígitos locales).
+// Acepta entradas como "11 1234 5678", "011 15 1234 5678", "+54 9 11 1234-5678", "5491112345678".
+// Devuelve null si no logra obtener 10 dígitos locales válidos.
+function normalizarTelefonoAR(input) {
+  let n = (input || '').replace(/\D/g, '');
+  if (!n) return null;
+  if (n.startsWith('54')) n = n.slice(2);
+  if (n.startsWith('9')) n = n.slice(1);
+  if (n.startsWith('0')) n = n.slice(1);
+  // Sacar "15" después del área (área de 2 a 4 dígitos + 15 + 6 a 8 dígitos)
+  const conQuince = n.match(/^(\d{2,4})15(\d{6,8})$/);
+  if (conQuince) n = conQuince[1] + conQuince[2];
+  if (n.length !== 10) return null;
+  return `549${n}`;
+}
+
 export default function YendoDomicilio() {
   const navigate = useNavigate();
-  const { info } = useToast();
+  const { info, error } = useToast();
 
   const [nombre, setNombre] = useState('');
   const [telefono, setTelefono] = useState('');
@@ -59,10 +75,12 @@ export default function YendoDomicilio() {
 
   const abrirWhatsApp = () => {
     if (!telefono) return;
-    const telLimpio = telefono.replace(/\D/g, '');
-    // Agregar código de país Argentina si no lo tiene
-    const telConCodigo = telLimpio.startsWith('54') ? telLimpio : `54${telLimpio}`;
-    const url = `https://wa.me/${telConCodigo}?text=${encodeURIComponent(mensajeGenerado)}`;
+    const normalizado = normalizarTelefonoAR(telefono);
+    if (!normalizado) {
+      error('Número inválido. Esperado: área + 8 dígitos (ej: 11 1234 5678)');
+      return;
+    }
+    const url = `https://wa.me/${normalizado}?text=${encodeURIComponent(mensajeGenerado)}`;
     window.open(url, '_blank');
   };
 
