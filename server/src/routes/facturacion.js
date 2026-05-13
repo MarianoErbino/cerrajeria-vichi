@@ -6,6 +6,38 @@ import { obtenerLogFacturacion } from '../modules/sheets/catalogo.js';
 import { verificarConexionWSFE } from '../modules/arca/wsfe.js';
 
 const router = Router();
+
+/**
+ * POST /api/facturacion/trigger?token=<BOT_TRIGGER_TOKEN>
+ * Endpoint pensado para cron externos (cron-job.org). Autenticado por shared
+ * secret en query param. NO requiere JWT — esta ruta se declara ANTES del
+ * `router.use(requireAuth)` para que el middleware no se aplique.
+ *
+ * Si el token no coincide o no está configurado, devuelve 401.
+ */
+router.post('/trigger', async (req, res, next) => {
+  const tokenEsperado = process.env.BOT_TRIGGER_TOKEN;
+  const tokenRecibido = req.query.token || req.headers['x-trigger-token'];
+
+  if (!tokenEsperado) {
+    return res.status(503).json({ error: 'BOT_TRIGGER_TOKEN no configurado en el server' });
+  }
+  if (tokenRecibido !== tokenEsperado) {
+    return res.status(401).json({ error: 'Token inválido' });
+  }
+
+  try {
+    console.log('[API] Trigger del bot vía shared secret');
+    const resultado = await ejecutarBotConControl('cron-externo');
+    if (resultado?.error) {
+      return res.status(409).json({ error: resultado.error });
+    }
+    res.json({ mensaje: 'Facturación ejecutada', resultado });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.use(requireAuth);
 
 /**

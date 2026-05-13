@@ -35,3 +35,11 @@ services:
         value: homologacion
       - key: BOT_TIMEZONE
         value: America/Argentina/Buenos_Aires
+      - key: BOT_TRIGGER_TOKEN
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_DESTINATARIO
+        sync: false
+      - key: EMAIL_FROM
+        sync: false

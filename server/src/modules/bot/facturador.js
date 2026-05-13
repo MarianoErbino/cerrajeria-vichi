@@ -1,9 +1,9 @@
 import { obtenerVentasPendientes, actualizarEstadoFacturacion } from '../sheets/ventas.js';
 import { agregarFila } from '../sheets/client.js';
-
-// Nombre real de la hoja de log en el Excel
-const HOJA_LOG = 'Facturacion_Log';
 import { solicitarCAE } from '../arca/wsfe.js';
+import { enviarResumenFacturacion } from '../email/sender.js';
+
+const HOJA_LOG = 'Facturacion_Log';
 
 /**
  * Ejecuta el proceso de facturación automática.
@@ -23,6 +23,7 @@ export async function ejecutarFacturacion() {
   let fallidas = 0;
   const errores = [];
   const caesEmitidos = [];
+  const ventasFacturadas = []; // {clienteNombre, montoCobrado, nroComprobante, cae, vencimientoCAE} para el email
 
   try {
     // 1. Leer ventas pendientes
@@ -60,6 +61,13 @@ export async function ejecutarFacturacion() {
 
         exitosas++;
         caesEmitidos.push(`${venta.id}:${resultado.cae}`);
+        ventasFacturadas.push({
+          clienteNombre: venta.clienteNombre,
+          montoCobrado: venta.montoCobrado,
+          nroComprobante: resultado.nroComprobante,
+          cae: resultado.cae,
+          vencimientoCAE: resultado.vencimientoCAE,
+        });
         console.log(`  ✅ CAE obtenido: ${resultado.cae} | Comprobante: ${resultado.nroComprobante}`);
 
       } catch (err) {
@@ -101,12 +109,17 @@ export async function ejecutarFacturacion() {
 
   await registrarLog(resumen);
 
+  // Mandar resumen por email (si hay algo que reportar). No bloquea si falla.
+  if (ventasProcesadas > 0) {
+    await enviarResumenFacturacion({ ...resumen, errores }, ventasFacturadas);
+  }
+
   const fin = new Date();
   const duracion = Math.round((fin - inicio) / 1000);
   console.log(`\n🤖 [Bot] Facturación finalizada en ${duracion}s`);
   console.log(`   Procesadas: ${ventasProcesadas} | Exitosas: ${exitosas} | Fallidas: ${fallidas}`);
 
-  return { ...resumen, errores, caesEmitidos };
+  return { ...resumen, errores, caesEmitidos, ventasFacturadas };
 }
 
 /**
