@@ -36,20 +36,26 @@ export async function leerRango(rango) {
 }
 
 /**
- * Agrega una fila al final de una hoja.
- * @param {string} hoja - Nombre de la hoja (ej: "Ventas")
- * @param {Array} fila - Array con los valores de la fila
+ * Agrega una fila al final de una hoja. Usa update sobre la próxima fila vacía
+ * (en lugar de append + INSERT_ROWS) para que funcione tanto en Sheets nativos
+ * como en Sheets convertidos desde XLSX (donde INSERT_ROWS no está soportado).
  */
 export async function agregarFila(hoja, fila) {
   const sheets = await getSheetsClient();
-  const respuesta = await sheets.spreadsheets.values.append({
+
+  // Buscar la última fila con datos en columna A
+  const lectura = await sheets.spreadsheets.values.get({
     spreadsheetId: process.env.SPREADSHEET_ID,
-    range: `${hoja}!A1`,
+    range: `${hoja}!A:A`,
+  });
+  const filasActuales = lectura.data.values?.length || 0;
+  const proximaFila = filasActuales + 1; // 1-indexed; si solo hay header (fila 1), próxima es 2
+
+  const respuesta = await sheets.spreadsheets.values.update({
+    spreadsheetId: process.env.SPREADSHEET_ID,
+    range: `${hoja}!A${proximaFila}`,
     valueInputOption: 'USER_ENTERED',
-    insertDataOption: 'INSERT_ROWS',
-    requestBody: {
-      values: [fila],
-    },
+    requestBody: { values: [fila] },
   });
   return respuesta.data;
 }

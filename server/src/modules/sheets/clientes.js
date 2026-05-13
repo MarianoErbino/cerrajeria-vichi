@@ -5,7 +5,7 @@ import {
 } from '../local/adaptadorLocal.js';
 
 const MODO_LOCAL = !process.env.SPREADSHEET_ID;
-const HOJA = '👤 Clientes';
+const HOJA = 'Clientes';
 
 const COL = { ID: 0, NOMBRE: 1, TELEFONO: 2, DIRECCION: 3, ULTIMA_VISITA: 4, TOTAL_TRABAJOS: 5 };
 

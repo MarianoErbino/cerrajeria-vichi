@@ -2,7 +2,7 @@ import { obtenerVentasPendientes, actualizarEstadoFacturacion } from '../sheets/
 import { agregarFila } from '../sheets/client.js';
 
 // Nombre real de la hoja de log en el Excel
-const HOJA_LOG = '📋 Facturacion_Log';
+const HOJA_LOG = 'Facturacion_Log';
 import { solicitarCAE } from '../arca/wsfe.js';
 
 /**
