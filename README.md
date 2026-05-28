@@ -271,27 +271,62 @@ Para automatización real (mandar mensajes sin intervención manual) habría que
 
 ## ARCA (facturación electrónica)
 
+> ⚠️ **Producción y Homologación usan portales y AC distintos.** El certificado emitido en uno NO sirve en el otro. Si los mezclás, WSAA tira `Certificado no emitido por AC de confianza`.
+
 ### Setup inicial (una vez)
 
-1. Generar localmente con OpenSSL:
-   ```bash
-   openssl genrsa -out key.pem 2048
-   openssl req -new -key key.pem -out cert.csr
-   ```
-   En el CSR: Country `AR`, Common Name = CUIT sin guiones.
-2. En el portal de AFIP con clave fiscal nivel 3:
-   - **Administrador de Relaciones de Clave Fiscal**
-   - Habilitar el servicio **WSFE - Facturación electrónica**
-   - Sección "Certificados" → **Agregar Certificado Digital** → pegar el contenido de `cert.csr`
-   - Bajar el `.crt` firmado y renombrarlo a `cert.pem`.
-3. Habilitar un **Punto de Venta electrónico** y anotar su número.
+#### 1. Generar par RSA + CSR (localmente con OpenSSL)
+
+```bash
+cd server/certs
+openssl genrsa -out key.pem 2048
+openssl req -new -key key.pem -out cert.csr
+```
+En el CSR: Country `AR`, Common Name = CUIT sin guiones. El **mismo CSR sirve para producción y homologación** — sólo cambia dónde lo firmás.
+
+#### 2A. Si vas a usar HOMOLOGACIÓN (recomendado para desarrollo / TIF)
+
+El portal es **WSASS - Auto-Servicio de Acceso a WSAA del Ambiente de Homologación**:
+
+1. Ir a **https://wsass-homo.afip.gob.ar/wsass/portal/main.aspx** y loguearse con clave fiscal.
+2. Crear nuevo certificado:
+   - **Alias**: sólo **letras y números** (sin guiones ni puntos), p. ej. `vichihomo2`.
+   - **CSR**: pegar el contenido entero de `cert.csr` (incluyendo `-----BEGIN/END CERTIFICATE REQUEST-----`).
+3. WSASS te devuelve el `.crt` firmado. Guardalo como `server/certs/cert.pem` reemplazando lo que hubiera.
+4. En el mismo portal, **Crear / Adherir Web Service**:
+   - **Tipo de Web Service**: `wsfe`
+   - **Computador Fiscal**: el alias del paso 2.
+5. Esperá ~5-15 min a que AFIP propague la autorización antes de probar.
+
+> 🕒 **Cert recién generado no es vigente al instante.** WSASS suele setear `validFrom` ~21:00 hs ARG del día de generación. Si lo creás de mañana y querés probar antes de esa hora, WSAA puede rechazarlo con `Computador no autorizado` (mensaje engañoso de AFIP). Verificá `validFrom` con: `node -e "const f=require('node-forge');const fs=require('fs');const c=f.pki.certificateFromPem(fs.readFileSync('./server/certs/cert.pem','utf8'));console.log(c.validity.notBefore.toISOString())"`.
+
+#### 2B. Si vas a usar PRODUCCIÓN
+
+1. Ir a **https://auth.afip.gob.ar/** con clave fiscal **nivel 3**.
+2. **Administrador de Relaciones de Clave Fiscal** → adherir servicio **"Administración de Certificados Digitales"**. Cerrar sesión y volver a entrar (los servicios recién adheridos sólo aparecen tras nuevo login).
+3. Entrar a **"Administración de Certificados Digitales"** → **Agregar alias** → subir el `cert.csr` → descargar el `.crt` → guardarlo como `cert.pem`.
+4. Volver al **Administrador de Relaciones de Clave Fiscal** → **Nueva Relación**:
+   - **Servicio** (Web Services): `Facturación Electrónica` (= wsfe).
+   - **Representante**: el alias del certificado creado en el paso 3.
+5. Habilitar un **Punto de Venta electrónico** en *Comprobantes en línea* o equivalente y anotar su número.
+
+#### 3. Verificar par cert + key
+
+```bash
+cd server
+node -e "const f=require('node-forge');const fs=require('fs');const c=f.pki.certificateFromPem(fs.readFileSync('./certs/cert.pem','utf8'));const k=f.pki.privateKeyFromPem(fs.readFileSync('./certs/key.pem','utf8'));console.log('CN:',c.subject.getField('CN').value);console.log('Issuer:',c.issuer.getField('CN').value);console.log('Valido desde:',c.validity.notBefore.toISOString());console.log('Match:',c.publicKey.n.toString(16)===f.pki.setRsaPublicKey(k.n,k.e).n.toString(16)?'OK':'FAIL')"
+```
+
+El `Issuer` te dice en qué ambiente está firmado:
+- `Computadores Test` (o similar) → **homologación**.
+- `AC FNMT...` o `Subordinada de AFIP` → **producción**.
 
 ### Configuración en local
 
 En `server/.env`:
 ```
 ARCA_CUIT=20XXXXXXXXX
-ARCA_PUNTO_VENTA=3
+ARCA_PUNTO_VENTA=1
 ARCA_ENVIRONMENT=homologacion
 ARCA_WSAA_URL=https://wsaahomo.afip.gov.ar/ws/services/LoginCms
 ARCA_WSFE_URL=https://wswhomo.afip.gov.ar/wsfev1/service.asmx
@@ -307,9 +342,26 @@ Los `.pem` no se suben al filesystem de Render. En vez de `ARCA_CERT_PATH` y `AR
 
 Para pasar de homologación a producción:
 - Cambiar `ARCA_ENVIRONMENT=produccion`
-- Cambiar los `ARCA_*_URL` a los endpoints de producción
-- Generar un certificado de producción en AFIP (es distinto al de homologación)
-- Reemplazar `ARCA_CERT_CONTENT` y `ARCA_KEY_CONTENT` con los de producción
+- Cambiar los `ARCA_*_URL` a los endpoints de producción:
+  - `ARCA_WSAA_URL=https://wsaa.afip.gov.ar/ws/services/LoginCms`
+  - `ARCA_WSFE_URL=https://servicios1.afip.gov.ar/wsfev1/service.asmx`
+- Generar un certificado **de producción** en el portal de producción (paso 2B). El de homologación NO sirve.
+- Reemplazar `ARCA_CERT_CONTENT` y `ARCA_KEY_CONTENT` con los de producción.
+
+### Errores típicos de WSAA y cómo se ven
+
+| Mensaje del SOAP Fault | Causa real | Cómo arreglar |
+|---|---|---|
+| `Certificado no emitido por AC de confianza` | El cert es de un ambiente y los URLs son del otro (lo más típico: cert de producción + URLs de homologación o viceversa) | Regenerar el cert en el portal correcto (WSASS para homo, AFIP normal para prod) |
+| `generationTime posee formato o dato inválido (ej: en el futuro o más de 24 horas de antigüedad)` | El reloj del proceso está desfasado, o el código construye mal el `generationTime` (ej: usaba hora UTC con sufijo `-03:00`, que corre 3hs al futuro). Hoy se manda como `...Z` (UTC explícito). | Verificar reloj del sistema. Si el código vuelve a romper esto, ver `server/src/modules/arca/auth.js`. |
+| `Computador no autorizado a acceder al servicio` | La relación entre el alias del cert y el servicio `wsfe` no está creada, o está propagándose (5-15 min), o el cert todavía no llegó a su `validFrom` | Verificar autorización en el portal; esperar; chequear `validFrom` |
+| `El CEE ya posee un TA valido` | El token cacheado anterior sigue válido (no es un error real, igual no debería romper porque el código reusa el cache) | Reiniciar el server para invalidar el cache en memoria |
+
+### Detalles de implementación
+
+- **Parseo SOAP tolerante a namespaces.** `wsfe.js` y `auth.js` usan `tagNameProcessors: [(name) => name.replace(/^.+:/, '')]` para parsear respuestas que vienen con cualquier prefijo (`soap:`, `soapenv:`, `env:`, etc.). AFIP a veces cambia esto entre versiones.
+- **Manejo de SOAP Fault.** Cuando AFIP devuelve 500 con un SOAP Fault, `postSOAP` (en `wsfe.js`) y el try/catch de `auth.js` extraen el `faultstring` y lo lanzan como `Error` legible en vez de `Request failed with status code 500`. Los faults se loguean como `[ARCA SOAP Fault] ...` o `[WSAA SOAP Fault] ...`.
+- **Token cacheado en memoria.** `auth.js` mantiene un cache del TA con margen de 5 min antes de la expiración. Reiniciar el server invalida el cache.
 
 ---
 
@@ -338,3 +390,101 @@ npm run dev      # Vite dev server
 npm run build    # Build de producción
 npm run lint     # ESLint
 ```
+
+---
+
+## Estado actual de la facturación — actualizado 2026-05-24
+
+> Esta sección documenta el estado final tras dos sesiones de trabajo (23/5 y 24/5 de 2026). **La facturación electrónica está funcionando de punta a punta en homologación.**
+
+### Hito principal
+
+🎯 **Primer CAE emitido y guardado correctamente** el 24/5/2026 a las 11:45 ARG:
+
+```
+🤖 [Bot] Iniciando facturación - 24/5/2026, 11:45:17
+[Bot] Procesando 1 venta(s) pendiente(s)...
+[Bot] Facturando venta ID=V1779633901694, Monto=$1800, Cliente=MARIANO ERBINO
+[ARCA Auth] Reutilizando token cacheado
+[ARCA Auth] Reutilizando token cacheado
+  ✅ CAE obtenido: 86210207056562 | Comprobante: 00001-00000002
+[Email] Resumen enviado a merbino@uade.edu.ar — id=913f3c3d-b273-4e50-9107-5332d587be9d
+🤖 [Bot] Facturación finalizada en 3s
+   Procesadas: 1 | Exitosas: 1 | Fallidas: 0
+```
+
+El comprobante quedó registrado en la hoja `Ventas` con su CAE, número, vencimiento; en `Facturacion_Log` quedó el run; y llegó el email a `merbino@uade.edu.ar`.
+
+### Lo que ya funciona ✅
+
+| Capa | Estado | Evidencia |
+|---|---|---|
+| WSAA homologación (autenticación) | OK | TA persistido en `server/data/arca-ta.json`, reusado entre reinicios. Logs muestran `Reutilizando token cacheado`. |
+| Certificado de homologación | Cargado y vigente | `server/certs/cert.pem` firmado por `Computadores Test` (AC de homologación). Vigente desde 23/05/2026 21:02 ARG hasta 23/05/2028. Par cert+key verificado. |
+| Alias en WSASS | `cerrajeriavichihomo2` | Adherido al servicio `wsfe` (matchea el CN del cert). Hay una autorización vieja huérfana a `cerrajeriavichihomov2` que conviene borrar cuando haya tiempo, pero no molesta. |
+| Variables `.env` ARCA | Cargadas | `ARCA_CUIT=20215627935`, `ARCA_PUNTO_VENTA=4`, URLs de homologación, paths a `./certs/cert.pem` y `./certs/key.pem`. |
+| Email Resend | Funcionando | Los resúmenes llegan a `merbino@uade.edu.ar`. |
+| UI Facturación | OK | Botones "Verificar conexión", "Facturar ahora (manual)", pendientes y historial — todos pintando datos reales. |
+| Schema FECAESolicitar | Completo y actualizado RG 5616 (2024) | `CondicionIVAReceptorId` + fechas de servicio cuando Concepto=2/3 + orden de tags correcto. |
+| Persistencia del TA | OK | `server/data/arca-ta.json` guarda y carga el token. Reinicios del server ya no rompen nada. |
+| Ciclo del TA automático | OK | Cuando el TA actual venza (cada ~12 hs), el server va a pedir uno nuevo solo y lo persiste. No hay intervención manual recurrente. |
+
+### Lo que queda pendiente
+
+#### 1. Validar el cambio de punto de venta a `00004` (sesión 24/5 en curso)
+
+El PV original fue `00001` (con el que se emitió el primer CAE), pero el usuario ya usa ese PV para otra cosa. **Se cambió `ARCA_PUNTO_VENTA=4` en el `.env`** y queda probar que AFIP lo acepte.
+
+Hay dos escenarios:
+- **A**: PV 4 ya está habilitado en homologación → emite CAE sin problema en el siguiente intento.
+- **B**: PV 4 no está dado de alta → AFIP rebota con `Punto de venta no autorizado` (o similar). Hay que crearlo en el portal **"Administración de Puntos de Venta y Domicilios"** de homologación.
+
+Plan: registrar una venta de prueba nueva, tocar "Facturar ahora", ver qué pasa. Si rebota, dar de alta el PV 4 en el portal.
+
+#### 2. Deploy a Render + Vercel + cron-job.org
+
+Para que la facturación corra todos los días a las 22:00 sin depender de tener la PowerShell local prendida:
+
+1. **Render**: usar el `render.yaml` del repo (Blueprint). Cargar las env vars marcadas `sync: false`. Para `ARCA_CERT_CONTENT` y `ARCA_KEY_CONTENT`, copiar el contenido literal de los `.pem`. Tener en cuenta que en Render el filesystem es efímero — el `arca-ta.json` se va a perder en cada cold start o redeploy, lo que reproduce el problema de "TA huérfano". Mitigación: persistir el TA en Google Sheets en lugar de disco (pendiente), o aceptar que cada redeploy obliga a esperar ~12 hs.
+2. **Vercel**: importar el repo con root `client`, env var `VITE_API_URL` apuntando al backend de Render.
+3. **cron-job.org**: cuenta gratis → cronjob diario a `POST https://cerrajeria-vichi-api.onrender.com/api/facturacion/trigger?token=<BOT_TRIGGER_TOKEN>` a las 22:00 ARG.
+
+#### 3. Optimizaciones futuras (no bloqueantes)
+
+- Migrar la persistencia del TA a Google Sheets para que sobreviva los redeploys de Render.
+- Borrar la autorización huérfana `cerrajeriavichihomov2` en WSASS.
+- Implementar reintento automático de ventas en estado `ERROR` en el siguiente run del bot.
+
+### Cambios al código hechos en sesiones 2026-05-23 y 2026-05-24
+
+Todos los cambios en `server/src/modules/arca/`:
+
+1. **`wsfe.js` — parsing tolerante a namespaces y manejo de SOAP Faults.** Constante `PARSE_OPTS` con `tagNameProcessors` que strippea el prefijo (`soap:`, `soapenv:`, `env:`, etc.) de cada tag. Helper `postSOAP` que parsea SOAP Faults cuando AFIP devuelve HTTP 500. Las 3 llamadas directas a `axios.post` (`obtenerUltimoComprobante`, `solicitarCAE`, `verificarConexionWSFE`) usan `postSOAP`.
+
+2. **`auth.js` — mismo parsing tolerante a namespaces** y try/catch alrededor del `axios.post` al WSAA para extraer faults legibles. Sin esto, los errores reales (`Certificado no emitido por AC de confianza`, `Computador no autorizado`, etc.) quedaban ocultos detrás de un genérico `Request failed with status code 500`.
+
+3. **`auth.js` — bug del `generationTime`.** El código construía `ahora.toISOString().replace(/\.\d{3}Z$/, '-03:00')`, lo que corre la hora 3hs al futuro (porque `toISOString()` devuelve UTC y luego pega offset `-03:00` como si fuera hora local). Cambiado a sufijo `Z` (UTC explícito), que AFIP acepta.
+
+4. **`auth.js` — persistencia del TA en disco.** Antes el TA estaba sólo en memoria. Cualquier reinicio del proceso lo perdía y forzaba a pedir uno nuevo a AFIP — que rechaza con `El CEE ya posee un TA valido` si el anterior sigue vigente. Ahora se guarda en `server/data/arca-ta.json` y se levanta de ahí al arrancar el proceso.
+
+5. **`wsfe.js` — schema FECAESolicitar actualizado a RG 5616 (2024).** Agregado tag obligatorio `<CondicionIVAReceptorId>` (toma el ID mapeado de la venta: CF=5, RI=1, MT=6, etc.). Agregadas fechas de servicio `<FchServDesde>/<FchServHasta>/<FchVtoPago>` cuando `Concepto != 1` (Servicios o mixto) — todas con la fecha del comprobante (pago contado). Orden de tags corregido: `ImpTrib` ahora va **antes** de `ImpIVA` (orden del WSDL oficial).
+
+Sin estos fixes la app no podía facturar en ningún ambiente.
+
+### Operación local en uso normal
+
+Para uso local (sin deploy), el proceso es:
+
+- **Server**: tiene que estar corriendo (`npm run dev` en `server/`). Si la PowerShell se cierra, no factura. El cron interno corre a las 22:00 ARG todos los días automáticamente mientras el proceso esté vivo.
+- **Client**: sólo necesario para usar la UI (registrar ventas, ver estado). El bot no lo necesita para funcionar.
+- **Token**: se renueva solo cada ~12 hs gracias a la persistencia en disco. No requiere intervención.
+
+| Acción | Necesita server | Necesita client |
+|---|---|---|
+| Cron diario a las 22:00 facturando solo | ✅ | ❌ |
+| Cron-job.org disparando el trigger | ✅ | ❌ |
+| Tocar "Facturar ahora" en la app | ✅ | ✅ |
+| Registrar una venta nueva desde la UI | ✅ | ✅ |
+| Ver el log o pendientes en la UI | ✅ | ✅ |
+
+Para uso "siempre encendido" sin depender de tener la PowerShell abierta, hay tres opciones: PM2, servicio de Windows con `nssm`/`node-windows`, o deploy a Render (la opción más limpia).

@@ -2,6 +2,45 @@ import axios from 'axios';
 import { parseStringPromise } from 'xml2js';
 import { obtenerToken } from './auth.js';
 
+const PARSE_OPTS = {
+  explicitArray: false,
+  tagNameProcessors: [(name) => name.replace(/^.+:/, '')],
+};
+
+/**
+ * Hace POST SOAP a ARCA. Si ARCA devuelve un HTTP 500 con SOAP Fault, extrae el
+ * faultstring y lo lanza como Error legible en lugar de un genérico "500".
+ */
+async function postSOAP(url, soapBody, soapAction) {
+  try {
+    return await axios.post(url, soapBody, {
+      headers: {
+        'Content-Type': 'text/xml; charset=utf-8',
+        'SOAPAction': soapAction,
+      },
+      timeout: 30000,
+    });
+  } catch (err) {
+    const data = err.response?.data;
+    if (typeof data === 'string') {
+      try {
+        const xml = await parseStringPromise(data, PARSE_OPTS);
+        const fault = xml?.Envelope?.Body?.Fault;
+        if (fault) {
+          const msg = fault.faultstring || fault.Reason?.Text || JSON.stringify(fault);
+          console.error('[ARCA SOAP Fault]', msg);
+          throw new Error(`ARCA SOAP Fault: ${msg}`);
+        }
+        console.error('[ARCA] Respuesta de error sin Fault parseable:', data.slice(0, 500));
+      } catch (parseErr) {
+        if (parseErr.message?.startsWith('ARCA SOAP Fault')) throw parseErr;
+        console.error('[ARCA] No se pudo parsear respuesta de error:', data.slice(0, 500));
+      }
+    }
+    throw err;
+  }
+}
+
 // Tipos de comprobante ARCA
 export const TIPOS_COMPROBANTE = {
   FACTURA_A: 1,
@@ -44,16 +83,14 @@ export async function obtenerUltimoComprobante(tipoComprobante) {
   </soapenv:Body>
 </soapenv:Envelope>`;
 
-  const respuesta = await axios.post(process.env.ARCA_WSFE_URL, soapBody, {
-    headers: {
-      'Content-Type': 'text/xml; charset=utf-8',
-      'SOAPAction': 'http://ar.gov.afip.dif.FEV1/FECompUltimoAutorizado',
-    },
-    timeout: 30000,
-  });
+  const respuesta = await postSOAP(
+    process.env.ARCA_WSFE_URL,
+    soapBody,
+    'http://ar.gov.afip.dif.FEV1/FECompUltimoAutorizado',
+  );
 
-  const xml = await parseStringPromise(respuesta.data, { explicitArray: false });
-  const resultado = xml['soapenv:Envelope']['soapenv:Body']['FECompUltimoAutorizadoResponse']['FECompUltimoAutorizadoResult'];
+  const xml = await parseStringPromise(respuesta.data, PARSE_OPTS);
+  const resultado = xml.Envelope.Body.FECompUltimoAutorizadoResponse.FECompUltimoAutorizadoResult;
 
   if (resultado.Errors) {
     const error = resultado.Errors.Err;
@@ -130,6 +167,13 @@ export async function solicitarCAE(venta) {
   // Para Factura C no se discrimina IVA
   const importeNeto = importe;
   const importeIVA = '0.00';
+
+  // RG AFIP: si concepto = Servicios (2) o Productos+Servicios (3), las fechas son obligatorias.
+  // Usamos la misma fecha del comprobante (servicio prestado ese día, pago contado).
+  const fechasServicio = concepto === 1 ? '' : `
+            <ar:FchServDesde>${fechaCbte}</ar:FchServDesde>
+            <ar:FchServHasta>${fechaCbte}</ar:FchServHasta>
+            <ar:FchVtoPago>${fechaCbte}</ar:FchVtoPago>`;
   const alicuotaIVA = tipoCbteNum === TIPOS_COMPROBANTE.FACTURA_C ? '' : `
       <ar:Alicuotas>
         <ar:AlicIva>
@@ -167,10 +211,11 @@ export async function solicitarCAE(venta) {
             <ar:ImpTotConc>0.00</ar:ImpTotConc>
             <ar:ImpNeto>${importeNeto}</ar:ImpNeto>
             <ar:ImpOpEx>0.00</ar:ImpOpEx>
-            <ar:ImpIVA>${importeIVA}</ar:ImpIVA>
             <ar:ImpTrib>0.00</ar:ImpTrib>
+            <ar:ImpIVA>${importeIVA}</ar:ImpIVA>${fechasServicio}
             <ar:MonId>PES</ar:MonId>
             <ar:MonCotiz>1</ar:MonCotiz>
+            <ar:CondicionIVAReceptorId>${condIVANum}</ar:CondicionIVAReceptorId>
             ${alicuotaIVA}
           </ar:FECAEDetRequest>
         </ar:FeDetReq>
@@ -179,16 +224,14 @@ export async function solicitarCAE(venta) {
   </soapenv:Body>
 </soapenv:Envelope>`;
 
-  const respuesta = await axios.post(process.env.ARCA_WSFE_URL, soapBody, {
-    headers: {
-      'Content-Type': 'text/xml; charset=utf-8',
-      'SOAPAction': 'http://ar.gov.afip.dif.FEV1/FECAESolicitar',
-    },
-    timeout: 30000,
-  });
+  const respuesta = await postSOAP(
+    process.env.ARCA_WSFE_URL,
+    soapBody,
+    'http://ar.gov.afip.dif.FEV1/FECAESolicitar',
+  );
 
-  const xml = await parseStringPromise(respuesta.data, { explicitArray: false });
-  const resultado = xml['soapenv:Envelope']['soapenv:Body']['FECAESolicitarResponse']['FECAESolicitarResult'];
+  const xml = await parseStringPromise(respuesta.data, PARSE_OPTS);
+  const resultado = xml.Envelope.Body.FECAESolicitarResponse.FECAESolicitarResult;
 
   // Verificar errores globales
   if (resultado.Errors) {
@@ -235,16 +278,14 @@ export async function verificarConexionWSFE() {
   </soapenv:Body>
 </soapenv:Envelope>`;
 
-  const respuesta = await axios.post(process.env.ARCA_WSFE_URL, soapBody, {
-    headers: {
-      'Content-Type': 'text/xml; charset=utf-8',
-      'SOAPAction': 'http://ar.gov.afip.dif.FEV1/FEDummy',
-    },
-    timeout: 10000,
-  });
+  const respuesta = await postSOAP(
+    process.env.ARCA_WSFE_URL,
+    soapBody,
+    'http://ar.gov.afip.dif.FEV1/FEDummy',
+  );
 
-  const xml = await parseStringPromise(respuesta.data, { explicitArray: false });
-  const resultado = xml['soapenv:Envelope']['soapenv:Body']['FEDummyResponse']['FEDummyResult'];
+  const xml = await parseStringPromise(respuesta.data, PARSE_OPTS);
+  const resultado = xml.Envelope.Body.FEDummyResponse.FEDummyResult;
 
   return {
     appServer: resultado.AppServer,

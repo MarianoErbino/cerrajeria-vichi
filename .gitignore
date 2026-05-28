@@ -5,5 +5,6 @@ server/certs/
 *.p12
 dist/
 .DS_Store
+desktop.ini
 server/data/
 .claude/
